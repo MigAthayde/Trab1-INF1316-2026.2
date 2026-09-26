@@ -1,15 +1,30 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/wait.h>
+#include <sys/mman.h>
+
+typedef enum {PRONTO, BLOQUEADO, EXECUTANDO, TERMINADO} Estado;
+typedef enum {NENHUM, LEITURA, ESCRITA} OpPendente;
+
+typedef struct Processo 
+{
+    int pid;
+    int pc; // Contador de processo
+    int n;
+    Estado estado;
+    OpPendente opPendente;
+    int acessosLeitura;
+    int acessosEscrita;
+} Processo;
 
 int main(void)
 {
     int pid1, pid2, pid3, pid4, pid5, pid6, pid7;
+    Processo processos[6]; // Uma ficha para cada processo. É o jeito do KernelSim ter informação sobre cada um
     printf("Inicializando kernelSim...\n");
 
-    int fdA1_A2[2], fdA2_A1[2];
-    pipe(fdA1_A2);
-    pipe(fdA2_A1); // Pipe bidirecional entre A1 e A1 e vice versa
+    // Vou criar a memória compartilada para os processos e kernelSim.
 
     pid1 = fork();
     if (pid1 < 0)
@@ -19,7 +34,7 @@ int main(void)
     }
     else if ( pid1 == 0) // Entrando no processo filho
     {
-        // Processo filho para A1, e por ai vai para os outros também!
+        // Processo filho para A1
         exit(0);
     }
 
