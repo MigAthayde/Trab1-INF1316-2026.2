@@ -1,1 +1,6 @@
-*.o
+# ignora tudo
+*
+# exceto arquivos com extensão
+!*.*
+# exceto diretórios (senão o git não entra neles)
+!*/

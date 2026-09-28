@@ -2,7 +2,9 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/wait.h>
-#include <sys/mman.h>
+#include <sys/shm.h>
+#include <sys/ipc.h>
+#include <signal.h>
 
 typedef enum {PRONTO, BLOQUEADO, EXECUTANDO, TERMINADO} Estado;
 typedef enum {NENHUM, LEITURA, ESCRITA} OpPendente;
@@ -21,16 +23,26 @@ typedef struct Processo
 int main(void)
 {
     int pid1, pid2, pid3, pid4, pid5, pid6, pid7;
+    int processoAtual = 0;
+    int tentativas = 0;
+    int p; // Essa aqui vai ser usada para pegar o pid do processo que terminou no loop do escalonador
     printf("Inicializando kernelSim...\n");
 
-    // 2. Criar a memoria compartilhada ANTES de qualquer fork()
-    Processo *processos = mmap(NULL, sizeof(Processo) * 6, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    if (processos == MAP_FAILED)
+    int shmid = shmget(IPC_PRIVATE, sizeof(Processo) * 6, IPC_CREAT | 0666);
+    if(shmid < 0)
     {
-        perror("Erro ao criar memoria compartilhada com mmap");
+        perror("Erro ao criar memoria compartilhada com shmget");
         exit(1);
     }
 
+    Processo *processos = (Processo *)shmat(shmid, NULL, 0);
+    if (processos ==  (void *)-1)
+    {
+        perror("Erro ao anexar memoria compartilhada com shmat");
+        exit(1);
+    }
+    char shmid_str[20];
+    sprintf(shmid_str, "%d", shmid);
     // 3. Inicializar cada posicao da tabela de processos (PCB)
     for (int i = 0; i < 6; i++)
     {
@@ -53,13 +65,14 @@ int main(void)
     else if (pid1 == 0) // Entrando no processo filho A1
     {
         // 5. Teste para verificar se a memoria compartilhada funciona (Passo 5)
-        processos[0].pc = 999;
-        printf("[A1] Escrevi na memoria compartilhada: processos[0].pc = %d\n", processos[0].pc);
-        exit(0);
+        execl("./app", "app", "0", shmid_str, NULL);
+        perror("Erro ao executar a aplicacao A1");
+        exit(1);
     }
     else
     {
         processos[0].pid = pid1;
+        kill(pid1, SIGSTOP);
     }
 
     pid2 = fork();
@@ -71,11 +84,14 @@ int main(void)
     else if (pid2 == 0)
     {
         // Processo filho para A2
-        exit(0);
+        execl("./app", "app", "1", shmid_str, NULL);
+        perror("Erro ao executar a aplicacao A2");
+        exit(1);
     }
     else
     {
         processos[1].pid = pid2;
+        kill(pid2, SIGSTOP);
     }
 
     pid3 = fork();
@@ -87,11 +103,14 @@ int main(void)
     else if (pid3 == 0)
     {
         // Processo filho para A3
-        exit(0);
+        execl("./app", "app", "2", shmid_str, NULL);
+        perror("Erro ao executar a aplicacao A3");
+        exit(1);
     }
     else
     {
         processos[2].pid = pid3;
+        kill(pid3, SIGSTOP);
     }
 
     pid4 = fork();
@@ -103,11 +122,14 @@ int main(void)
     else if (pid4 == 0)
     {
         // Processo filho para A4
-        exit(0);
+        execl("./app", "app", "3", shmid_str, NULL);
+        perror("Erro ao executar a aplicacao A4");
+        exit(1);
     }
     else
     {
         processos[3].pid = pid4;
+        kill(pid4, SIGSTOP);
     }
 
     pid5 = fork();
@@ -119,11 +141,14 @@ int main(void)
     else if (pid5 == 0)
     {
         // Processo filho para A5
-        exit(0);
+        execl("./app", "app", "4", shmid_str, NULL);
+        perror("Erro ao executar a aplicacao A5");
+        exit(1);
     }
     else
     {
         processos[4].pid = pid5;
+        kill(pid5, SIGSTOP);
     }
 
     pid6 = fork();
@@ -135,11 +160,14 @@ int main(void)
     else if (pid6 == 0)
     {
         // Processo filho para A6
-        exit(0);
+        execl("./app", "app", "5", shmid_str, NULL);
+        perror("Erro ao executar a aplicacao A6");
+        exit(1);
     }
     else
     {
         processos[5].pid = pid6;
+        kill(pid6, SIGSTOP);
     }
 
     pid7 = fork();
@@ -154,19 +182,48 @@ int main(void)
         exit(0);
     }
 
-    // 5. Teste no processo pai (KernelSim)
-    sleep(1);
-    printf("[KernelSim] Lendo memoria compartilhada apos teste: processos[0].pc = %d\n", processos[0].pc);
-
-    // Aguardar o termino dos processos filhos do teste
-    for (int i = 0; i < 7; i++)
+    // Loop escalonador!
+    while(1)
     {
-        wait(NULL);
+        while(processos[processoAtual].estado != PRONTO && tentativas < 6)
+        {
+            processoAtual = (processoAtual + 1) % 6;
+            tentativas++;
+        }
+        if (tentativas == 6)
+        {
+            printf("[Kernel] Todos os processos terminaram. Encerrando kernelSim...\n");
+            break;
+        }
+        tentativas = 0;
+
+        kill(processos[processoAtual].pid, SIGCONT);
+        printf("[Kernel] A%d executando (pc=%d)\n", processoAtual + 1, processos[processoAtual].pc);
+        processos[processoAtual].estado = EXECUTANDO;
+        usleep(500000);
+        kill(processos[processoAtual].pid, SIGSTOP);
+        while((p = waitpid(-1, NULL, WNOHANG)) > 0)
+        {
+            for (int i = 0; i < 6; i++)
+            {
+                if(processos[i].pid == p)
+                {
+                    processos[i].estado = TERMINADO;
+                    printf("[Kernel] A%d terminou (pc=%d)\n", i + 1, processos[i].pc);
+
+                }
+            }
+        }
+        if (processos[processoAtual].estado != TERMINADO)
+        {
+            processos[processoAtual].estado = PRONTO;
+        }
+        processoAtual = (processoAtual + 1) % 6;
     }
 
     // Liberar a memoria compartilhada
-    munmap(processos, sizeof(Processo) * 6);
-    printf("Teste de memoria compartilhada finalizado com sucesso!\n");
+    shmdt(processos);
+    shmctl(shmid, IPC_RMID, NULL);
 
     return 0;
 }
