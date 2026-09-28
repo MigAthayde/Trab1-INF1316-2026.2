@@ -26,7 +26,14 @@ int main(void)
     int processoAtual = 0;
     int tentativas = 0;
     int p; // Essa aqui vai ser usada para pegar o pid do processo que terminou no loop do escalonador
+
     printf("Inicializando kernelSim...\n");
+    int fd[2];
+    if(pipe(fd) == -1)
+    {
+        perror("Erro ao criar pipe");
+        exit(1);
+    }
 
     int shmid = shmget(IPC_PRIVATE, sizeof(Processo) * 6, IPC_CREAT | 0666);
     if(shmid < 0)
@@ -65,6 +72,9 @@ int main(void)
     else if (pid1 == 0) // Entrando no processo filho A1
     {
         // 5. Teste para verificar se a memoria compartilhada funciona (Passo 5)
+        close(fd[0]);
+        dup2(fd[1], 1);
+        close(fd[1]);
         execl("./app", "app", "0", shmid_str, NULL);
         perror("Erro ao executar a aplicacao A1");
         exit(1);
@@ -84,6 +94,9 @@ int main(void)
     else if (pid2 == 0)
     {
         // Processo filho para A2
+        close(fd[0]);
+        dup2(fd[1], 1);
+        close(fd[1]);
         execl("./app", "app", "1", shmid_str, NULL);
         perror("Erro ao executar a aplicacao A2");
         exit(1);
@@ -103,6 +116,9 @@ int main(void)
     else if (pid3 == 0)
     {
         // Processo filho para A3
+        close(fd[0]);
+        dup2(fd[1], 1);
+        close(fd[1]);
         execl("./app", "app", "2", shmid_str, NULL);
         perror("Erro ao executar a aplicacao A3");
         exit(1);
@@ -122,6 +138,9 @@ int main(void)
     else if (pid4 == 0)
     {
         // Processo filho para A4
+        close(fd[0]);
+        dup2(fd[1], 1);
+        close(fd[1]);
         execl("./app", "app", "3", shmid_str, NULL);
         perror("Erro ao executar a aplicacao A4");
         exit(1);
@@ -141,6 +160,9 @@ int main(void)
     else if (pid5 == 0)
     {
         // Processo filho para A5
+        close(fd[0]);
+        dup2(fd[1], 1);
+        close(fd[1]);
         execl("./app", "app", "4", shmid_str, NULL);
         perror("Erro ao executar a aplicacao A5");
         exit(1);
@@ -160,6 +182,9 @@ int main(void)
     else if (pid6 == 0)
     {
         // Processo filho para A6
+        close(fd[0]);
+        dup2(fd[1], 1);
+        close(fd[1]);
         execl("./app", "app", "5", shmid_str, NULL);
         perror("Erro ao executar a aplicacao A6");
         exit(1);
@@ -179,9 +204,18 @@ int main(void)
     else if (pid7 == 0)
     {
         // Processo filho para InterControllerSim
-        exit(0);
+        close(fd[0]);
+        dup2(fd[1], 1);
+        close(fd[1]);
+        execl("./interController", "interController", NULL);
+        perror("Erro ao executar o InterControllerSim");
+        exit(1);
     }
 
+    // Criou todos os filhos!! 
+    close(fd[1]);
+    dup2(fd[0], 0);
+    close(fd[0]);
     // Loop escalonador!
     while(1)
     {
@@ -221,6 +255,8 @@ int main(void)
         processoAtual = (processoAtual + 1) % 6;
     }
 
+    kill(pid7, SIGKILL);
+    waitpid(pid7, NULL, 0);
     // Liberar a memoria compartilhada
     shmdt(processos);
     shmctl(shmid, IPC_RMID, NULL);
