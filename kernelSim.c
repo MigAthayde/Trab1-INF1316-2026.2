@@ -76,11 +76,20 @@ int verificarTodosTerminaram(Processo *processos)
 void tabelaProcessos(int sig)
 {
     printf("\n[Kernel] Tabela de Processos (PCB):\n\n");
-    printf("PID | PC | N | Estado | OpPendente | AcessosLeitura | AcessosEscrita\n");
+    printf("PID | PC | N | Estado | OpPendente | Dispositivo | AcessosLeitura | AcessosEscrita\n");
     printf("--------------------------------------------------------------------\n");
     for (int i = 0; i < 6; i++)
     {
-        printf("%3d | %2d | %d | %7s | %10s | %14d | %15d\n",
+        char dispositivo[20];
+        if(processos[i].estado == BLOQUEADO)
+        {
+            snprintf(dispositivo, sizeof(dispositivo), "pipe%d", i/2 + 1);
+        }
+        else
+        {
+            snprintf(dispositivo, sizeof(dispositivo), "-");
+        }
+        printf("%3d | %2d | %d | %7s | %10s | %20s | %14d | %15d\n",
                processos[i].pid,
                processos[i].pc,
                processos[i].n,
@@ -89,6 +98,7 @@ void tabelaProcessos(int sig)
                (processos[i].estado == EXECUTANDO) ? "EXECUTANDO" : "TERMINADO",
                (processos[i].opPendente == NENHUM) ? "NENHUM" :
                (processos[i].opPendente == LEITURA) ? "LEITURA" : "ESCRITA",
+               dispositivo,
                processos[i].acessosLeitura,
                processos[i].acessosEscrita);
     }

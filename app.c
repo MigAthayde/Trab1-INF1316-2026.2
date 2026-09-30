@@ -4,7 +4,7 @@
 #include <sys/shm.h>
 #include <sys/ipc.h>
 
-#define MAX 20 // Lembrar de no teste final, usar entre 5000 e 10000 como pede o enunciado
+#define MAX 5000
 
 typedef enum {PRONTO, BLOQUEADO, EXECUTANDO, TERMINADO} Estado;
 typedef enum {NENHUM, LEITURA, ESCRITA} OpPendente;
@@ -94,7 +94,7 @@ int main(int argc, char *argv[])
 
         usleep(500000);
     }
-    
+
     shmdt(processos);
     return 0;
 }
