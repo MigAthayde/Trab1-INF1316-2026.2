@@ -20,12 +20,59 @@ typedef struct Processo
     int acessosEscrita;
 } Processo;
 
+// Funcao auxiliar para escolher o proximo processo PRONTO em Round-Robin
+int escolherProximoPronto(Processo *processos, int atual)
+{
+    int inicio = (atual == -1) ? 0 : (atual + 1) % 6;
+    for (int i = 0; i < 6; i++)
+    {
+        int idx = (inicio + i) % 6;
+        if (processos[idx].estado == PRONTO)
+        {
+            return idx;
+        }
+    }
+    return -1;
+}
+
+// Funcao auxiliar para verificar e atualizar processos que terminaram
+void verificarTerminados(Processo *processos, int *atual)
+{
+    int p;
+    while ((p = waitpid(-1, NULL, WNOHANG)) > 0)
+    {
+        for (int i = 0; i < 6; i++)
+        {
+            if (processos[i].pid == p)
+            {
+                processos[i].estado = TERMINADO;
+                printf("[Kernel] A%d terminou (pc=%d)\n", i + 1, processos[i].pc);
+                if (*atual == i)
+                {
+                    *atual = -1;
+                }
+            }
+        }
+    }
+}
+
+// Funcao auxiliar para checar se todos os 6 processos estao TERMINADOS
+int verificarTodosTerminaram(Processo *processos)
+{
+    for (int i = 0; i < 6; i++)
+    {
+        if (processos[i].estado != TERMINADO)
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 int main(void)
 {
     int pid1, pid2, pid3, pid4, pid5, pid6, pid7;
-    int processoAtual = 0;
-    int tentativas = 0;
-    int p; // Essa aqui vai ser usada para pegar o pid do processo que terminou no loop do escalonador
+    int p; // Usado para capturar o PID de processos que terminaram
 
     printf("Inicializando kernelSim...\n");
     int fd[2];
@@ -216,43 +263,148 @@ int main(void)
     close(fd[1]);
     dup2(fd[0], 0);
     close(fd[0]);
-    // Loop escalonador!
-    while(1)
+    // Estruturas da Etapa 7:
+    // buffer[i] guarda o ultimo PC enviado pelo processo i para o seu parceiro (i ^ 1)
+    int buffer[6] = {0};
+
+    // Filas FIFO para processos bloqueados em chamadas de sistema
+    int filaLeitura[6];
+    int tamLeitura = 0;
+
+    int filaEscrita[6];
+    int tamEscrita = 0;
+
+    int atual = -1; // -1 significa que nenhum processo esta executando
+    int msg;
+
+    while (1)
     {
-        while(processos[processoAtual].estado != PRONTO && tentativas < 6)
+        if (read(0, &msg, sizeof(int)) <= 0)
         {
-            processoAtual = (processoAtual + 1) % 6;
-            tentativas++;
+            perror("[Kernel] Erro na leitura do pipe de eventos");
+            exit(1);
         }
-        if (tentativas == 6)
+
+        // 1. Atualiza quem ja terminou
+        verificarTerminados(processos, &atual);
+
+        // 2. Condicao de saida: todos os 6 processos terminaram?
+        if (verificarTodosTerminaram(processos))
         {
             printf("[Kernel] Todos os processos terminaram. Encerrando kernelSim...\n");
             break;
         }
-        tentativas = 0;
 
-        kill(processos[processoAtual].pid, SIGCONT);
-        printf("[Kernel] A%d executando (pc=%d)\n", processoAtual + 1, processos[processoAtual].pc);
-        processos[processoAtual].estado = EXECUTANDO;
-        usleep(500000);
-        kill(processos[processoAtual].pid, SIGSTOP);
-        while((p = waitpid(-1, NULL, WNOHANG)) > 0)
+        if (msg == 0) // IRQ0: Fim da fatia de tempo (Time-slice)
         {
-            for (int i = 0; i < 6; i++)
-            {
-                if(processos[i].pid == p)
-                {
-                    processos[i].estado = TERMINADO;
-                    printf("[Kernel] A%d terminou (pc=%d)\n", i + 1, processos[i].pc);
+            printf("[Kernel] IRQ0 recebido\n");
 
+            // Se tem alguem executando, interrompe e coloca como PRONTO
+            if (atual != -1)
+            {
+                kill(processos[atual].pid, SIGSTOP);
+                if (processos[atual].estado != TERMINADO)
+                {
+                    processos[atual].estado = PRONTO;
+                }
+            }
+
+            // Seleciona o proximo processo PRONTO (Round-Robin)
+            int proximo = escolherProximoPronto(processos, atual);
+            if (proximo != -1)
+            {
+                atual = proximo;
+                processos[atual].estado = EXECUTANDO;
+                printf("[Kernel] A%d executando (pc=%d)\n", atual + 1, processos[atual].pc);
+                kill(processos[atual].pid, SIGCONT);
+            }
+            else
+            {
+                atual = -1; // Nenhum processo pronto no momento
+            }
+        }
+        else if (msg == 1) // IRQ1: Fim de operacao de leitura em pipe
+        {
+            printf("[Kernel] IRQ1 recebido\n");
+            if (tamLeitura > 0)
+            {
+                // Tira o primeiro processo da fila FIFO de leitura
+                int j = filaLeitura[0];
+                for (int k = 0; k < tamLeitura - 1; k++)
+                {
+                    filaLeitura[k] = filaLeitura[k + 1];
+                }
+                tamLeitura--;
+
+                // Entrega o dado do parceiro (j ^ 1)
+                int parceiro = j ^ 1;
+                processos[j].n = buffer[parceiro];
+                buffer[parceiro] = 0; // Consumido (evita releitura; se parceiro nao escreveu, e 0 como no NO_WAIT)
+
+                processos[j].opPendente = NENHUM;
+                processos[j].estado = PRONTO;
+                printf("[Kernel] A%d desbloqueado da LEITURA (recebeu N=%d de A%d, agora PRONTO)\n", 
+                       j + 1, processos[j].n, parceiro + 1);
+            }
+        }
+        else if (msg == 2) // IRQ2: Fim de operacao de escrita em pipe
+        {
+            printf("[Kernel] IRQ2 recebido\n");
+            if (tamEscrita > 0)
+            {
+                // Tira o primeiro processo da fila FIFO de escrita
+                int j = filaEscrita[0];
+                for (int k = 0; k < tamEscrita - 1; k++)
+                {
+                    filaEscrita[k] = filaEscrita[k + 1];
+                }
+                tamEscrita--;
+
+                // Grava o PC no buffer do canal de j
+                buffer[j] = processos[j].pc;
+                processos[j].opPendente = NENHUM;
+                processos[j].estado = PRONTO;
+                printf("[Kernel] A%d desbloqueado da ESCRITA (escreveu PC=%d no buffer, agora PRONTO)\n", 
+                       j + 1, buffer[j]);
+            }
+        }
+        else if (msg >= 10) // Syscall vinda de uma aplicacao (msg = 10 + i)
+        {
+            int i = msg - 10;
+            if (i >= 0 && i < 6)
+            {
+                // Bloqueia imediatamente o processo requisitante
+                kill(processos[i].pid, SIGSTOP);
+                processos[i].estado = BLOQUEADO;
+
+                if (processos[i].opPendente == LEITURA)
+                {
+                    processos[i].acessosLeitura++;
+                    printf("[Kernel] Syscall LEITURA de A%d (BLOQUEADO na fila)\n", i + 1);
+                    filaLeitura[tamLeitura++] = i;
+                }
+                else if (processos[i].opPendente == ESCRITA)
+                {
+                    processos[i].acessosEscrita++;
+                    printf("[Kernel] Syscall ESCRITA de A%d (BLOQUEADO na fila, valor pc=%d)\n", i + 1, processos[i].pc);
+                    filaEscrita[tamEscrita++] = i;
+                }
+
+                // Se o processo que chamou syscall era o que estava rodando na CPU, escalona o proximo
+                if (i == atual)
+                {
+                    atual = -1;
+                    int proximo = escolherProximoPronto(processos, atual);
+                    if (proximo != -1)
+                    {
+                        atual = proximo;
+                        processos[atual].estado = EXECUTANDO;
+                        printf("[Kernel] A%d executando (pc=%d)\n", atual + 1, processos[atual].pc);
+                        kill(processos[atual].pid, SIGCONT);
+                    }
                 }
             }
         }
-        if (processos[processoAtual].estado != TERMINADO)
-        {
-            processos[processoAtual].estado = PRONTO;
-        }
-        processoAtual = (processoAtual + 1) % 6;
     }
 
     kill(pid7, SIGKILL);
