@@ -4,7 +4,7 @@
 #include <sys/shm.h>
 #include <sys/ipc.h>
 
-#define MAX 20 // Para testes. No teste final, usar entre 5000 e 10000 como pede o enunciado
+#define MAX 20 // Lembrar de no teste final, usar entre 5000 e 10000 como pede o enunciado
 
 typedef enum {PRONTO, BLOQUEADO, EXECUTANDO, TERMINADO} Estado;
 typedef enum {NENHUM, LEITURA, ESCRITA} OpPendente;
@@ -70,7 +70,7 @@ int main(int argc, char *argv[])
     int PC = 1;
     int N = 0;
 
-    // Loop do processo de aplicacao conforme o enunciado
+    // Loop do processo de aplicacao
     while (PC < MAX)
     {
         PC++;
@@ -94,8 +94,7 @@ int main(int argc, char *argv[])
 
         usleep(500000);
     }
-
-    // Desanexar memoria compartilhada ao terminar
+    
     shmdt(processos);
     return 0;
 }

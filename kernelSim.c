@@ -20,7 +20,11 @@ typedef struct Processo
     int acessosEscrita;
 } Processo;
 
-// Funcao auxiliar para escolher o proximo processo PRONTO em Round-Robin
+// VARIÁVEIS GLOBAIS!!!!!
+Processo *processos;
+int atual = -1;
+//////////////////////////
+
 int escolherProximoPronto(Processo *processos, int atual)
 {
     int inicio = (atual == -1) ? 0 : (atual + 1) % 6;
@@ -35,7 +39,6 @@ int escolherProximoPronto(Processo *processos, int atual)
     return -1;
 }
 
-// Funcao auxiliar para verificar e atualizar processos que terminaram
 void verificarTerminados(Processo *processos, int *atual)
 {
     int p;
@@ -56,7 +59,7 @@ void verificarTerminados(Processo *processos, int *atual)
     }
 }
 
-// Funcao auxiliar para checar se todos os 6 processos estao TERMINADOS
+
 int verificarTodosTerminaram(Processo *processos)
 {
     for (int i = 0; i < 6; i++)
@@ -69,10 +72,39 @@ int verificarTodosTerminaram(Processo *processos)
     return 1;
 }
 
+// Essa função aqui vai ser usada como sigtstp handler
+void tabelaProcessos(int sig)
+{
+    printf("\n[Kernel] Tabela de Processos (PCB):\n\n");
+    printf("PID | PC | N | Estado | OpPendente | AcessosLeitura | AcessosEscrita\n");
+    printf("--------------------------------------------------------------------\n");
+    for (int i = 0; i < 6; i++)
+    {
+        printf("%3d | %2d | %d | %7s | %10s | %14d | %15d\n",
+               processos[i].pid,
+               processos[i].pc,
+               processos[i].n,
+               (processos[i].estado == PRONTO) ? "PRONTO" :
+               (processos[i].estado == BLOQUEADO) ? "BLOQUEADO" :
+               (processos[i].estado == EXECUTANDO) ? "EXECUTANDO" : "TERMINADO",
+               (processos[i].opPendente == NENHUM) ? "NENHUM" :
+               (processos[i].opPendente == LEITURA) ? "LEITURA" : "ESCRITA",
+               processos[i].acessosLeitura,
+               processos[i].acessosEscrita);
+    }
+    raise(SIGSTOP);
+    for (int i = 0; i < 6; i++)
+    {
+        if (i != atual && processos[i].estado != TERMINADO)
+        {
+            kill(processos[i].pid, SIGSTOP);
+        }
+    }
+}
+
 int main(void)
 {
     int pid1, pid2, pid3, pid4, pid5, pid6, pid7;
-    int p; // Usado para capturar o PID de processos que terminaram
 
     printf("Inicializando kernelSim...\n");
     int fd[2];
@@ -89,12 +121,13 @@ int main(void)
         exit(1);
     }
 
-    Processo *processos = (Processo *)shmat(shmid, NULL, 0);
+    processos = (Processo *)shmat(shmid, NULL, 0);
     if (processos ==  (void *)-1)
     {
         perror("Erro ao anexar memoria compartilhada com shmat");
         exit(1);
     }
+    signal(SIGTSTP, tabelaProcessos);
     char shmid_str[20];
     sprintf(shmid_str, "%d", shmid);
     // 3. Inicializar cada posicao da tabela de processos (PCB)
@@ -274,7 +307,6 @@ int main(void)
     int filaEscrita[6];
     int tamEscrita = 0;
 
-    int atual = -1; // -1 significa que nenhum processo esta executando
     int msg;
 
     while (1)
